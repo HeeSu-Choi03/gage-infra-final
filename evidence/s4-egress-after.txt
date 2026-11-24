@@ -1,0 +1,9 @@
+host=db02 2026-11-24T06:05:30Z
+1.1.1.1:443 open
+1.1.1.1:80 open
+1.1.1.1:2052 blocked
+1.1.1.1:2082 blocked
+1.1.1.1:8880 blocked
+1.1.1.1:8443 blocked
+1.1.1.1:8080 blocked
+2606:4700:10::6814:1cf6 archive.ubuntu.com.cdn.cloudflare.net archive.ubuntu.com

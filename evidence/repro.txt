@@ -1,0 +1,4 @@
+﻿destroy: 163s exit=0  Destroy complete! Resources: 37 destroyed.
+apply:   261s exit=0  Apply complete! Resources: 37 added, 0 changed, 0 destroyed.
+??plan: No changes. Your infrastructure matches the configuration. and found no differences, so no changes are needed.
+service_url: https://<서비스 공용IP>

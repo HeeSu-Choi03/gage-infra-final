@@ -1,0 +1,5 @@
+﻿시작 전 경보: 없음
+[1] SSH 무차별 대입 10회 → SSHAuthFailures 경보 66.3초
+[2] 잘못된 토큰 300회 (401 300건) → HttpAuthDeniedSpike 경보 93.4초
+[3] sshd_config 변조 → IntegrityViolation 경보 27.7초
+    원복 후 불일치: gage_sec_integrity_mismatch 0

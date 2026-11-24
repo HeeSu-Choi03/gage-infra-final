@@ -1,0 +1,16 @@
+== up
+<web01>:9100 1
+https://<사설IP>/healthz 1
+<web02>:9100 1
+<db01>:9100 1
+127.0.0.1:9100 1
+<db01>:9187 1
+https://<사설IP>/healthz 1
+<db02>:9187 1
+https://<사설IP>/healthz 1
+<web03>:9100 1
+<db02>:9100 1
+== SLI(5m)
+sli:availability:ratio_rate5m 0.9111111111111111
+== alerts
+NoPostgresPrimary firing

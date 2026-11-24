@@ -1,0 +1,28 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+terraform.tfvars
+*.auto.tfvars
+
+# 시크릿·키
+.env
+*.env
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+kubeconfig*
+
+# 기타
+node_modules/
+__pycache__/
+.venv/
+
+# plan 파일과 plan JSON에는 sensitive 값이 평문으로 들어간다 (2026-11-24 발견)
+*.plan
+tfplan.json
+evidence-apply*.log
+evidence-destroy.log

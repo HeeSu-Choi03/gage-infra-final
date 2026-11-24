@@ -1,0 +1,92 @@
+#cloud-config
+hostname: ${hostname}
+# VR(이중화) 경유 tier 간 경로에서 1500 바이트 패킷이 버려진다(2026-11-24 실측). MTU를 낮춘다.
+bootcmd:
+  - [sh, -c, 'for i in $(ls /sys/class/net | grep ^e); do ip link set $i mtu 1400; done']
+ssh_pwauth: false
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys: ["${ssh_pubkey}"]
+apt:
+  conf: |
+    DPkg::Lock::Timeout "600";
+    Acquire::Retries "5";
+package_update: true
+packages: [postgresql, redis-server, keepalived, prometheus-node-exporter, prometheus-postgres-exporter]
+write_files:
+  # exporter는 OS 사용자 prometheus로 돌고, 소켓 peer 인증으로 DB 역할 prometheus(pg_monitor)에 접속(비밀번호 없음).
+  # 이 값이 없으면 pg_up=0으로 경보가 계속 울린다(2026-11-24 실측).
+  - path: /etc/default/prometheus-postgres-exporter
+    content: |
+      DATA_SOURCE_NAME="host=/var/run/postgresql user=prometheus dbname=postgres sslmode=disable"
+  - path: /opt/gage/schema.sql
+    encoding: gz+b64
+    content: ${schema_sql}
+  - path: /etc/postgresql/16/main/conf.d/gage.conf
+    content: |
+      listen_addresses = '*'
+      ssl = on
+      password_encryption = scram-sha-256
+      wal_level = replica
+      max_wal_senders = 10
+      max_replication_slots = 10
+      hot_standby = on
+      wal_keep_size = 512MB
+      log_connections = on
+      log_disconnections = on
+      log_line_prefix = '%m [%p] %u@%d %h '
+  - path: /opt/gage/pg_hba.extra
+    content: |
+      hostssl gage        gage_app   ${web_cidr} scram-sha-256
+      hostssl replication replicator ${data_cidr} scram-sha-256
+      hostssl replication replicator ${mgmt_cidr} scram-sha-256
+  - path: /usr/local/bin/pg_is_primary
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # keepalived 상태 검사: PostgreSQL이 살아 있고 Primary(복구 모드 아님)일 때만 VIP를 가진다.
+      [ "$(runuser -u postgres -- psql -tAc 'select not pg_is_in_recovery()' 2>/dev/null)" = "t" ]
+  - path: /etc/keepalived/keepalived.conf
+    content: |
+      global_defs {
+        enable_script_security
+        script_user root
+      }
+      vrrp_script chk_pg {
+        script "/usr/local/bin/pg_is_primary"
+        interval 2
+        fall 2
+        rise 1
+      }
+      vrrp_instance DB {
+        state BACKUP
+        nopreempt
+        interface IFACE
+        virtual_router_id 52
+        priority ${role == "primary" ? 110 : 100}
+        advert_int 1
+        unicast_src_ip ${self_ip}
+        unicast_peer { ${peer_ip} }
+        virtual_ipaddress { ${db_vip}/24 }
+        track_script { chk_pg }
+      }
+runcmd:
+  - sed -i "s/IFACE/$(ip -o -4 route show to default | awk '{print $5}')/" /etc/keepalived/keepalived.conf
+  - cat /opt/gage/pg_hba.extra >> /etc/postgresql/16/main/pg_hba.conf
+  - sed -i -e 's/^bind .*/bind 0.0.0.0/' -e 's/^# *requirepass .*/requirepass ${redis_pw}/' /etc/redis/redis.conf
+  - systemctl restart redis-server
+%{ if role == "primary" ~}
+  - systemctl restart postgresql
+  - runuser -u postgres -- psql -v ON_ERROR_STOP=1 -c "CREATE ROLE gage_owner NOLOGIN" -c "CREATE ROLE gage_app LOGIN PASSWORD '${db_app_pw}'" -c "CREATE ROLE replicator LOGIN REPLICATION PASSWORD '${db_repl_pw}'" -c "CREATE DATABASE gage OWNER gage_owner"
+  - runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d gage -c "GRANT gage_owner TO postgres" -c "ALTER SCHEMA public OWNER TO gage_owner" -c "SET ROLE gage_owner" -f /opt/gage/schema.sql
+  - runuser -u postgres -- psql -d gage -c "CREATE ROLE prometheus LOGIN" -c "GRANT pg_monitor TO prometheus" -c "INSERT INTO tenants (name, token_hash) VALUES ('A매장', '${tenant_a_sha}'), ('B매장', '${tenant_b_sha}')" -c "INSERT INTO products SELECT t, 'SKU' || lpad(i::text, 3, '0'), '상품' || i, 100000 FROM generate_series(1,2) t, generate_series(1,50) i"
+  - runuser -u postgres -- psql -c "SELECT pg_create_physical_replication_slot('replica')"
+%{ else ~}
+  - systemctl stop postgresql
+  # Primary가 역할·슬롯을 만들 때까지 재시도
+  - until rm -rf /var/lib/postgresql/16/main && runuser -u postgres -- env PGPASSWORD='${db_repl_pw}' PGSSLMODE=require pg_basebackup -h ${primary_ip} -U replicator -D /var/lib/postgresql/16/main -R -X stream -S replica; do sleep 10; done
+  - systemctl start postgresql
+%{ endif ~}
+  - systemctl restart keepalived prometheus-postgres-exporter

@@ -1,0 +1,84 @@
+#cloud-config
+hostname: ${hostname}
+# VR(이중화) 경유 tier 간 경로에서 1500 바이트 패킷이 버려진다(2026-11-24 실측). MTU를 낮춘다.
+bootcmd:
+  - [sh, -c, 'for i in $(ls /sys/class/net | grep ^e); do ip link set $i mtu 1400; done']
+  # nginx 패키지 설치 시 바로 시작되므로 인증서가 먼저 있어야 한다(없으면 dpkg 실패, 2026-11-24 실측).
+  - [sh, -c, '[ -f /etc/ssl/gage/key.pem ] || { mkdir -p /etc/ssl/gage && openssl req -x509 -nodes -newkey rsa:2048 -days 365 -subj /CN=gage.local -keyout /etc/ssl/gage/key.pem -out /etc/ssl/gage/cert.pem && chmod 600 /etc/ssl/gage/key.pem; }']
+ssh_pwauth: false
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys: ["${ssh_pubkey}"]
+apt:
+  conf: |
+    DPkg::Lock::Timeout "600";
+    Acquire::Retries "5";
+package_update: true
+packages: [docker.io, nginx, prometheus-node-exporter]
+write_files:
+  - path: /opt/gage/main.py
+    encoding: gz+b64
+    content: ${main_py}
+  - path: /opt/gage/requirements.txt
+    encoding: gz+b64
+    content: ${requirements}
+  - path: /opt/gage/Dockerfile
+    encoding: gz+b64
+    content: ${dockerfile}
+  - path: /etc/gage/app.env
+    permissions: "0600"
+    content: |
+      DATABASE_URL=postgresql://gage_app:${db_app_pw}@${db_vip}:5432/gage?sslmode=require&connect_timeout=3
+      REDIS_URL=redis://:${redis_pw}@${db_vip}:6379/0
+  - path: /etc/nginx/sites-available/default
+    content: |
+      server {
+        listen 443 ssl;
+        ssl_certificate     /etc/ssl/gage/cert.pem;
+        ssl_certificate_key /etc/ssl/gage/key.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        server_tokens off;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Upstream ${hostname} always;
+        client_max_body_size 16k;
+        # VR LB는 헬스체크가 없다. 내 앱이 죽으면 옆 웹 서버의 8443(앱 직결, 되넘김 없음)으로 넘긴다.
+        location / {
+          proxy_pass http://127.0.0.1:8000;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_connect_timeout 2s;
+          proxy_intercept_errors on;
+          error_page 502 503 504 = @peer;
+        }
+        location @peer {
+          proxy_pass https://${peer_ip}:8443;
+          proxy_ssl_verify off;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_connect_timeout 2s;
+        }
+      }
+      server {
+        listen 8443 ssl;
+        ssl_certificate     /etc/ssl/gage/cert.pem;
+        ssl_certificate_key /etc/ssl/gage/key.pem;
+        server_tokens off;
+        allow ${web_cidr}; # web tier 어느 서버든 우회 요청 가능
+        deny all;
+        location / { proxy_pass http://127.0.0.1:8000; }
+      }
+  # 보안 지표 (SSH 실패, 401/403, 무결성) → node_exporter textfile
+  - path: /usr/local/bin/gage-secmon
+    permissions: "0755"
+    encoding: gz+b64
+    content: ${secmon_sh}
+  - path: /etc/cron.d/gage-secmon
+    content: |
+      * * * * * root /usr/local/bin/gage-secmon
+runcmd:
+  - systemctl restart nginx
+  - mkdir -p /var/lib/gage && sha256sum /etc/ssh/sshd_config /etc/passwd /etc/sudoers /home/ubuntu/.ssh/authorized_keys /etc/nginx/sites-available/default > /var/lib/gage/integrity.sha256
+  - docker build -t gage:1.0 /opt/gage
+  - docker rm -f gage || true
+  - docker run -d --name gage --restart=always -p 127.0.0.1:8000:8000 --env-file /etc/gage/app.env gage:1.0

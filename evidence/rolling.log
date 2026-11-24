@@ -1,0 +1,54 @@
+﻿== web[0] 援먯껜 14:50:13
+
+Apply complete! Resources: 2 added, 1 changed, 2 destroyed.
+powershell : Connection to <web01> closed by remote host.
+At line:1 char:302
++ ... tch {} } }; powershell -NoProfile -ExecutionPolicy Bypass -File scrip ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Connection to 1...by remote host.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Connection timed out during banner exchange
+Connection timed out during banner exchange
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+== web[1] 援먯껜 14:55:30
+Apply complete! Resources: 5 added, 1 changed, 2 destroyed.
+client_loop: send disconnect: Unknown error
+Connection timed out during banner exchange
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+== web[2] 援먯껜 15:00:09
+Apply complete! Resources: 2 added, 1 changed, 2 destroyed.
+Connection to <web03> closed by remote host.
+Connection timed out during banner exchange
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+stdio forwarding failed
+   web[2] 以鍮꾨맖 15:04:56
+
+

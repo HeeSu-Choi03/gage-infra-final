@@ -1,0 +1,8 @@
+# 복사: cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars는 .gitignore 대상이다. 커밋·제출·캡처·AI 채팅에 넣지 않는다.
+api_key    = "여기에_API_KEY"
+secret_key = "여기에_SECRET_KEY"
+
+# 네트워크 (실제 값은 tfvars에만. 저장소에 주소를 두지 않는다)
+vpc_cidr = "<사설 /16 대역>"
+vpn_cidr = "<VPN 게이트웨이 SNAT 주소>/32"

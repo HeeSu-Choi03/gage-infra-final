@@ -1,0 +1,176 @@
+#cloud-config
+# bastion(유일한 SSH 진입점) + 모니터링 + 백업 저장소
+hostname: mon
+# VR(이중화) 경유 tier 간 경로에서 1500 바이트 패킷이 버려진다(2026-11-24 실측). MTU를 낮춘다.
+bootcmd:
+  - [sh, -c, 'for i in $(ls /sys/class/net | grep ^e); do ip link set $i mtu 1400; done']
+ssh_pwauth: false
+users:
+  - name: ubuntu
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys: ["${ssh_pubkey}"]
+apt:
+  conf: |
+    DPkg::Lock::Timeout "600";
+    Acquire::Retries "5";
+package_update: true
+packages: [docker.io, docker-compose-v2, postgresql-client, prometheus-node-exporter]
+write_files:
+  - path: /opt/mon/compose.yaml
+    content: |
+      services:
+        prometheus:
+          image: prom/prometheus:v2.55.1
+          restart: always
+          network_mode: host
+          volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro", "./rules.yml:/etc/prometheus/rules.yml:ro"]
+          command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d", "--web.listen-address=127.0.0.1:9090"]
+        blackbox:
+          image: prom/blackbox-exporter:v0.25.0
+          restart: always
+          network_mode: host
+          volumes: ["./blackbox.yml:/etc/blackbox_exporter/config.yml:ro"]
+          command: ["--config.file=/etc/blackbox_exporter/config.yml", "--web.listen-address=127.0.0.1:9115"]
+        grafana:
+          image: grafana/grafana:11.3.1
+          restart: always
+          network_mode: host
+          environment:
+            GF_SECURITY_ADMIN_PASSWORD: "${grafana_pw}"
+            GF_USERS_ALLOW_SIGN_UP: "false"
+          volumes:
+            - ./datasource.yml:/etc/grafana/provisioning/datasources/ds.yml:ro
+            - ./dashboards.yml:/etc/grafana/provisioning/dashboards/gage.yml:ro
+            - ./dashboards:/var/lib/grafana/dashboards:ro
+  - path: /opt/mon/prometheus.yml
+    content: |
+      global: { scrape_interval: 5s, evaluation_interval: 5s }
+      rule_files: [/etc/prometheus/rules.yml]
+      scrape_configs:
+        - job_name: node
+          static_configs:
+            - targets: [%{ for ip in concat(web_ips, db_ips) }"${ip}:9100", %{ endfor }"127.0.0.1:9100"]
+        - job_name: postgres
+          static_configs:
+            - targets: [%{ for i, ip in db_ips }%{ if i > 0 }, %{ endif }"${ip}:9187"%{ endfor }]
+        - job_name: probe
+          metrics_path: /probe
+          params: { module: [https_health] }
+          static_configs:
+            - targets: [%{ for i, ip in web_ips }%{ if i > 0 }, %{ endif }"https://${ip}/healthz"%{ endfor }]
+          relabel_configs:
+            - { source_labels: [__address__], target_label: __param_target }
+            - { source_labels: [__param_target], target_label: instance }
+            - { target_label: __address__, replacement: "127.0.0.1:9115" }
+  - path: /opt/mon/blackbox.yml
+    content: |
+      modules:
+        https_health:
+          prober: http
+          timeout: 2s
+          http: { tls_config: { insecure_skip_verify: true } }   # 자체 서명 인증서
+  - path: /opt/mon/rules.yml
+    content: |
+      groups:
+        - name: gage
+          rules:
+            - record: sli:availability:ratio_rate5m
+              expr: avg(avg_over_time(probe_success[5m]))
+            - alert: InstanceDown
+              expr: up == 0
+              for: 15s
+            - alert: WebProbeFailed
+              expr: probe_success == 0
+              for: 10s
+            - alert: PostgresDown
+              expr: pg_up == 0
+              for: 15s
+            - alert: NoPostgresPrimary
+              expr: absent(pg_up == 1 and on(instance) pg_replication_is_replica == 0)
+              for: 10s
+        # 보안 경보 (지표는 /usr/local/bin/gage-secmon)
+        - name: security
+          rules:
+            - alert: SSHAuthFailures          # 무차별 대입 시도
+              expr: gage_sec_ssh_auth_failures_5m > 5
+            - alert: HttpAuthDeniedSpike      # 토큰 추측·스캔 (401/403 분당 60건 초과)
+              expr: sum(rate(gage_sec_http_auth_denied_total[2m])) * 60 > 60
+              for: 30s
+            - alert: IntegrityViolation       # sshd_config, passwd, sudoers, authorized_keys, nginx 설정 변경
+              expr: gage_sec_integrity_mismatch > 0
+            - alert: SecurityTelemetryMissing # 수집 스크립트가 멈추면 위 경보가 조용해진다
+              expr: time() - node_textfile_mtime_seconds{file=~".*gage_sec.prom"} > 180
+            - alert: TLSCertExpiringSoon
+              expr: probe_ssl_earliest_cert_expiry - time() < 30 * 86400
+  - path: /opt/mon/datasource.yml
+    content: |
+      apiVersion: 1
+      datasources:
+        - { name: Prometheus, type: prometheus, uid: prom, url: "http://127.0.0.1:9090", isDefault: true }
+  - path: /opt/mon/dashboards.yml
+    content: |
+      apiVersion: 1
+      providers:
+        - { name: gage, type: file, options: { path: /var/lib/grafana/dashboards } }
+  - path: /opt/mon/dashboards/security.json
+    encoding: gz+b64
+    content: ${sec_dash}
+  - path: /usr/local/bin/gage-secmon
+    permissions: "0755"
+    encoding: gz+b64
+    content: ${secmon_sh}
+  - path: /etc/cron.d/gage-secmon
+    content: |
+      * * * * * root /usr/local/bin/gage-secmon
+  - path: /etc/gage/backup.key
+    permissions: "0600"
+    content: "${backup_pw}"
+  - path: /root/.pgpass
+    permissions: "0600"
+    content: |
+      *:5432:*:replicator:${db_repl_pw}
+  # WAL 실시간 수신 → RPO ≈ 0~수 초. VIP를 따라가므로 페일오버 후에도 새 Primary에서 받는다.
+  - path: /etc/systemd/system/pg-receivewal.service
+    content: |
+      [Unit]
+      Description=pg_receivewal from DB VIP
+      After=network-online.target
+      [Service]
+      Environment=PGSSLMODE=require
+      Environment=PGPASSFILE=/root/.pgpass
+      ExecStart=/usr/local/bin/gage-receivewal
+      Restart=always
+      RestartSec=5
+      [Install]
+      WantedBy=multi-user.target
+  # DB 클러스터를 새로 만들면 timeline이 겹친다(2026-11-24 실측). 클러스터 ID별 폴더에 받는다.
+  - path: /usr/local/bin/gage-receivewal
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -e
+      id=$(psql "host=${db_vip} user=replicator dbname=replication replication=true" -Atc IDENTIFY_SYSTEM | cut -d'|' -f1)
+      mkdir -p "/backup/wal/$id"
+      exec /usr/bin/pg_receivewal -h ${db_vip} -U replicator -D "/backup/wal/$id" --no-loop --synchronous
+  # 베이스 백업: 압축 후 AES-256 암호화 저장, 7일 보관
+  - path: /usr/local/bin/gage-basebackup
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      f=/backup/base/base-$(date +%Y%m%d-%H%M%S).tar.gz.enc
+      PGSSLMODE=require PGPASSFILE=/root/.pgpass pg_basebackup -h ${db_vip} -U replicator -D - -Ft -X none -z \
+        | openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:/etc/gage/backup.key -out "$f"
+      find /backup/base -name '*.enc' -mtime +7 -delete
+      echo "$f"
+  - path: /etc/cron.d/gage-backup
+    content: |
+      0 3 * * * root /usr/local/bin/gage-basebackup >> /var/log/gage-backup.log 2>&1
+runcmd:
+  - mkdir -p /backup/wal /backup/base
+  - chmod 700 /backup
+  - mkdir -p /var/lib/gage && sha256sum /etc/ssh/sshd_config /etc/passwd /etc/sudoers /home/ubuntu/.ssh/authorized_keys > /var/lib/gage/integrity.sha256
+  - cd /opt/mon && docker compose up -d
+  - systemctl daemon-reload
+  - systemctl enable --now pg-receivewal

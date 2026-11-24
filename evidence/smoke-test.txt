@@ -1,0 +1,7 @@
+﻿PASS healthz 200
+PASS 토큰 없으면 401
+PASS A 토큰: 필터 없는 쿼리도 A 매장 행만 (RLS)
+PASS B 토큰: B 매장 행만, A와 다른 매장
+PASS A 주문 생성 201
+PASS A 주문이 B 재고를 바꾸지 않음
+PASS 잘못된 토큰 401

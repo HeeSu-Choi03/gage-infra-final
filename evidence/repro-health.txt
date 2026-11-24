@@ -1,0 +1,4 @@
+mon status: done
+active
+alerts: []
+[('<db02>:9187', '1'), ('<db01>:9187', '1')]

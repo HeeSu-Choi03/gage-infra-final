@@ -1,0 +1,30 @@
+{
+  "uid": "gage-security",
+  "title": "가게장부 Security",
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    { "id": 1, "type": "stat", "title": "SSH 인증 실패 (5분, 전체)", "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 5 } ] } } },
+      "targets": [ { "refId": "A", "expr": "sum(gage_sec_ssh_auth_failures_5m)" } ] },
+    { "id": 2, "type": "stat", "title": "HTTP 401/403 (분당)", "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 60 } ] } } },
+      "targets": [ { "refId": "A", "expr": "sum(rate(gage_sec_http_auth_denied_total[2m])) * 60" } ] },
+    { "id": 3, "type": "stat", "title": "변조된 설정 파일", "gridPos": { "x": 12, "y": 0, "w": 6, "h": 5 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } } },
+      "targets": [ { "refId": "A", "expr": "sum(gage_sec_integrity_mismatch)" } ] },
+    { "id": 4, "type": "stat", "title": "TLS 인증서 남은 일수 (최소)", "gridPos": { "x": 18, "y": 0, "w": 6, "h": 5 },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 30 } ] } } },
+      "targets": [ { "refId": "A", "expr": "min(probe_ssl_earliest_cert_expiry - time()) / 86400" } ] },
+    { "id": 5, "type": "timeseries", "title": "SSH 인증 실패 (서버별, 5분 창)", "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+      "targets": [ { "refId": "A", "expr": "gage_sec_ssh_auth_failures_5m", "legendFormat": "{{instance}}" } ] },
+    { "id": 6, "type": "timeseries", "title": "HTTP 401/403 (웹 서버별, 분당)", "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+      "targets": [ { "refId": "A", "expr": "rate(gage_sec_http_auth_denied_total[2m]) * 60", "legendFormat": "{{instance}}" } ] },
+    { "id": 7, "type": "timeseries", "title": "sudo 실행 / 로그인 세션", "gridPos": { "x": 0, "y": 13, "w": 12, "h": 8 },
+      "targets": [ { "refId": "A", "expr": "gage_sec_sudo_commands_5m", "legendFormat": "sudo {{instance}}" },
+                   { "refId": "B", "expr": "gage_sec_login_sessions", "legendFormat": "세션 {{instance}}" } ] },
+    { "id": 8, "type": "table", "title": "발생 중인 경보", "gridPos": { "x": 12, "y": 13, "w": 12, "h": 8 },
+      "targets": [ { "refId": "A", "expr": "ALERTS{alertstate=\"firing\"}", "format": "table", "instant": true } ] }
+  ]
+}

@@ -1,0 +1,8 @@
+백업→복구 시험 (2026-11-24, scripts/restore_test.sh, mon에서 실행)
+베이스 백업: pg_basebackup | gzip | openssl aes-256-cbc → /backup/base/*.enc
+WAL: pg_receivewal --synchronous (클러스터 ID별 폴더)
+복구: 복호화 → 압축 해제 → WAL 재생(restore_command) → postgres:16 컨테이너 기동
+복구 소요: 18s (복호화+WAL 재생+기동), 전체(백업 시작→조회 가능): 20s
+복구본 주문 수: 18755, 마지막 주문 시각 2026-11-24 05:48:52.156699+00
+운영 DB(db01) 주문 수: 18755, 마지막 주문 시각 2026-11-24 05:48:52.156699+00
+→ 일치. RPO 0 (이 시험 기준, 쓰기 없는 상태)
