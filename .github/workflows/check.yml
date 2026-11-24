@@ -15,8 +15,7 @@ jobs:
           terraform init -backend=false -input=false
           terraform validate
       - name: trivy config (정적 분석)
-        uses: aquasecurity/trivy-action@0.28.0
-        with: { scan-type: config, scan-ref: ., exit-code: "1" }
+        run: docker run --rm -v "$PWD:/src" aquasec/trivy:latest config --exit-code 1 /src
       - name: policy as code selftest (P1~P5가 위반 샘플을 잡는지)
         run: python3 policies/check_plan.py --selftest
       - name: gitleaks (커밋 이력 전체 시크릿 검사)
